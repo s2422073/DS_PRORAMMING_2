@@ -198,6 +198,7 @@ class CalculatorApp(ft.Container):
         self.new_operand = True
 
 
+
 def main(page: ft.Page):
     page.title = "Calc App"
     calc = CalculatorApp()
