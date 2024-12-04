@@ -17,7 +17,7 @@ def main(page: ft.Page):
 
     # ローカルファイルから地域リストを取得
     def get_area_list():
-        with open("/Users/satoreo/DS_prog_2/jma/areas.json", "r", encoding="utf-8") as f:
+        with open("areas.json", "r", encoding="utf-8") as f:
             area_data = json.load(f)
         return area_data
 
@@ -46,7 +46,6 @@ def main(page: ft.Page):
 
     # 七日間の天気情報を取得する関数
     def get_seven_days_weather(page, area_code):
-        
         weather_data = get_weather_data(area_code)
         if weather_data is None:
             error_message = f"天気情報を取得できませんでした。地域コード: {area_code}"
@@ -58,53 +57,52 @@ def main(page: ft.Page):
 
         # 取得したデータをもとに天気情報を表示
         weather_cards = []
-        for time_series in weather_data[0]['timeSeries']:
-            time_defines = time_series['timeDefines'][:7]  # 最初の7つの日付を採用
-            areas = time_series['areas']
-            for area in areas:
-                print_message(f"選択された地域コード: {area_code}")
-                print_message(f"--- APIのエリアコード: {area['area']['code']} ---")
-                if area['area']['code'] == area['area']['code'].startswith(area_code[:5]) or area_code:  # エリアコードが一致または五桁の一致
-                    for i, time in enumerate(time_defines):
-                        # `T`を除去した日付
-                        forecast_date = time.split("T")[0]  # "T" を基準に分割し、日付部分だけを残す
+        for time_series in weather_data[1]['timeSeries']:  # 週間天気予報のデータを選択
+            if len(time_series['timeDefines']) >= 7:  # 最初の7つの日付を採用
+                time_defines = time_series['timeDefines'][:7]
+                areas = time_series['areas']
+                for area in areas:
+                    if area['area']['code'].startswith(area_code[:5]):  # エリアコードが一致または五桁の一致
+                        for i, time in enumerate(time_defines):
+                            # `T`を除去した日付
+                            forecast_date = time.split("T")[0]
 
-                        # 各種情報を取得
-                        temps_max = area.get('tempsMax', ['N/A'])
-                        temps_min = area.get('tempsMin', ['N/A'])
-                        pops = area.get('pops', ['N/A'])
-                        weather_codes = area.get('weatherCodes', ['N/A'])
+                            # 各種情報を取得
+                            pops = area.get('pops', ['N/A'])
+                            weather_codes = area.get('weatherCodes', ['N/A'])
+                            temps_min = area.get('tempsMin', ['N/A'])
+                            temps_max = area.get('tempsMax', ['N/A'])
 
-                        # インデックスが範囲内であることを確認
-                        pop = pops[i] if i < len(pops) else 'N/A'
-                        temp_max = temps_max[i] if i < len(temps_max) else 'N/A'
-                        temp_min = temps_min[i] if i < len(temps_min) else 'N/A'
-                        weather_code = weather_codes[i] if i < len(weather_codes) else 'N/A'
+                            # インデックスが範囲内であることを確認
+                            pop = pops[i] if i < len(pops) else 'N/A'
+                            temp_max = temps_max[i] if i < len(temps_max) else 'N/A'
+                            temp_min = temps_min[i] if i < len(temps_min) else 'N/A'
+                            weather_code = weather_codes[i] if i < len(weather_codes) else 'N/A'
 
-                        # 天気コードに基づくアイコンURLを生成
-                        icon_url = f"https://www.jma.go.jp/bosai/forecast/img/{weather_code}.svg"
+                            # 天気コードに基づくアイコンURLを生成
+                            icon_url = f"https://www.jma.go.jp/bosai/forecast/img/{weather_code}.svg"
 
-                        # 気温の表示形式を調整（青文字と赤文字）
-                        weather_cards.append(
-                            ft.Container(
-                                content=ft.Column(
-                                    controls=[
-                                        ft.Text(f"日付: {forecast_date}"),
-                                        ft.Image(src=icon_url, width=40, height=40),  # アイコン画像を表示
-                                        ft.Text(f"天気コード: {weather_code}"),
-                                        ft.Text(f"最低気温: {temp_min}°C", color=ft.colors.BLUE),
-                                        ft.Text(f"最高気温: {temp_max}°C", color=ft.colors.RED),
-                                        ft.Text(f"降水確率: {pop}%"),
-                                    ]
-                                ),
-                                width=200,
-                                height=250,
-                                padding=10,
-                                bgcolor=ft.colors.LIGHT_BLUE_50,
-                                border_radius=10,
-                                margin=5,
+                            # 気温の表示形式を調整（青文字と赤文字）
+                            weather_cards.append(
+                                ft.Container(
+                                    content=ft.Column(
+                                        controls=[
+                                            ft.Text(f"日付: {forecast_date}"),
+                                            ft.Image(src=icon_url, width=40, height=40),  # アイコン画像を表示
+                                            ft.Text(f"天気コード: {weather_code}"),
+                                            ft.Text(f"最低気温: {temp_min}°C", color=ft.colors.BLUE),
+                                            ft.Text(f"最高気温: {temp_max}°C", color=ft.colors.RED),
+                                            ft.Text(f"降水確率: {pop}%"),
+                                        ]
+                                    ),
+                                    width=200,
+                                    height=250,
+                                    padding=10,
+                                    bgcolor=ft.colors.LIGHT_BLUE_50,
+                                    border_radius=10,
+                                    margin=5,
+                                )
                             )
-                        )
         if not weather_cards:
             error_message = "該当する天気情報がありません。"
             weather_details.controls = [ft.Text(error_message)]
