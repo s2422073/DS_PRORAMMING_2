@@ -1,0 +1,263 @@
+import flet as ft
+import json
+import requests
+import sqlite3
+
+# 気象庁APIのURL
+FORECAST_URL = "https://www.jma.go.jp/bosai/forecast/data/forecast/{}.json"
+
+# SQLiteデータベースを作成（既存のデータベースがあれば接続）
+conn = sqlite3.connect("weather_forecast.db")
+cursor = conn.cursor()
+
+# テーブル作成
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS weather_forecasts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    area_code TEXT,
+    forecast_date TEXT,
+    weather_code TEXT,
+    min_temp TEXT,
+    max_temp TEXT,
+    pop TEXT
+)
+""")
+conn.commit()
+conn.close()
+
+def insert_weather_data(area_code, forecast_date, weather_code, min_temp, max_temp, pop):
+    conn = sqlite3.connect("weather_forecast.db")
+    cursor = conn.cursor()
+
+    # データを挿入
+    cursor.execute("""
+    INSERT INTO weather_forecasts (area_code, forecast_date, weather_code, min_temp, max_temp, pop)
+    VALUES (?, ?, ?, ?, ?, ?)
+    """, (area_code, forecast_date, weather_code, min_temp, max_temp, pop))
+
+    conn.commit()
+    conn.close()
+
+def get_area_list():
+    with open("areas.json", "r", encoding="utf-8") as f:
+        area_data = json.load(f)
+    return area_data
+
+def print_message(message):
+    print(message)
+
+def get_weather_data(area_code):
+    url = FORECAST_URL.format(area_code)
+    print_message(f"アクセスURL: {url}")
+    try:
+        response = requests.get(url)
+        response.raise_for_status()  # HTTPエラーが発生した場合に例外を発生させる
+        data_json = response.json()
+        print_message(f"取得したデータ: {json.dumps(data_json, indent=2, ensure_ascii=False)}")  # デバッグ情報の出力
+        return data_json
+    except requests.exceptions.RequestException as e:
+        error_message = f"HTTPリクエストエラー: {e}"
+        print_message(error_message)
+        return None
+    except json.JSONDecodeError as e:
+        error_message = f"JSONデコードエラー: {e}"
+        print_message(error_message)
+        return None
+
+def save_weather_to_db(weather_data, area_code):
+    for time_series in weather_data[1]['timeSeries']:
+        if len(time_series['timeDefines']) >= 7:
+            time_defines = time_series['timeDefines'][:7]
+            areas = time_series['areas']
+            for area in areas:
+                if area['area']['code'].startswith(area_code[:5]):
+                    for i, time in enumerate(time_defines):
+                        forecast_date = time.split("T")[0]
+                        pops = area.get('pops', ['N/A'])
+                        weather_codes = area.get('weatherCodes', ['N/A'])
+                        temps_min = area.get('tempsMin', ['N/A'])
+                        temps_max = area.get('tempsMax', ['N/A'])
+
+                        pop = pops[i] if i < len(pops) else 'N/A'
+                        temp_max = temps_max[i] if i < len(temps_max) else 'N/A'
+                        temp_min = temps_min[i] if i < len(temps_min) else 'N/A'
+                        weather_code = weather_codes[i] if i < len(weather_codes) else 'N/A'
+
+                        # DBに保存
+                        insert_weather_data(area_code, forecast_date, weather_code, temp_min, temp_max, pop)
+
+def get_weather_from_db(area_code):
+    conn = sqlite3.connect("weather_forecast.db")
+    cursor = conn.cursor()
+
+    # DBから天気情報を取得
+    cursor.execute("""
+    SELECT forecast_date, weather_code, min_temp, max_temp, pop
+    FROM weather_forecasts
+    WHERE area_code = ?
+    ORDER BY forecast_date
+    LIMIT 7
+    """, (area_code,))
+    
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+def display_weather_from_db(area_code):
+    weather_data = get_weather_from_db(area_code)
+    weather_cards = []
+    
+    for row in weather_data:
+        forecast_date, weather_code, min_temp, max_temp, pop = row
+        icon_url = f"https://www.jma.go.jp/bosai/forecast/img/{weather_code}.svg"
+        
+        weather_cards.append(
+            ft.Container(
+                content=ft.Column(
+                    controls=[
+                        ft.Text(f"日付: {forecast_date}"),
+                        ft.Image(src=icon_url, width=40, height=40),
+                        ft.Text(f"天気コード: {weather_code}"),
+                        ft.Text(f"最低気温: {min_temp}°C", color=ft.colors.BLUE),
+                        ft.Text(f"最高気温: {max_temp}°C", color=ft.colors.RED),
+                        ft.Text(f"降水確率: {pop}%"),
+                    ]
+                ),
+                width=200,
+                height=250,
+                padding=10,
+                bgcolor=ft.colors.LIGHT_BLUE_50,
+                border_radius=10,
+                margin=5,
+            )
+        )
+    
+    return weather_cards
+
+def get_seven_days_weather(page, area_code, weather_details):
+    # 指定された地域コードで天気データを取得
+    weather_data = get_weather_data(area_code)
+    
+    if weather_data:
+        # 天気データをDBに保存
+        save_weather_to_db(weather_data, area_code)
+        
+        # DBから天気情報を取得して表示
+        weather_cards = display_weather_from_db(area_code)
+        
+        # 天気情報を更新
+        weather_details.controls.clear()
+        weather_details.controls.extend(weather_cards)
+        weather_details.visible = True
+        page.update()
+
+def update_region_list(page, region_list, weather_details):
+    area_data = get_area_list()
+
+    # 地域リストをリセット
+    region_list.controls = []
+
+    # 子地域を展開する関数
+    def add_child_regions(parent_region, parent_code):
+        child_controls = []
+        if 'children' in parent_region:
+            for child in parent_region['children']:
+                if child in area_data['offices']:
+                    child_controls.append(
+                        ft.ListTile(
+                            title=ft.Text(area_data['offices'][child]['name']),
+                            on_click=lambda e, area_code=child: get_seven_days_weather(page, area_code, weather_details)
+                        )
+                    )
+        return child_controls
+
+    # 親地域を展開する関数
+    def add_parent_region(region_data):
+        for region_code, region in region_data.items():
+            parent_region_name = region['name']
+            # 子地域を追加
+            child_regions = add_child_regions(region, region_code)
+            if child_regions:
+                region_list.controls.append(
+                    ft.ExpansionTile(
+                        title=ft.Text(parent_region_name),
+                        controls=child_regions
+                    )
+                )
+
+    # centersの地域を展開
+    add_parent_region(area_data['centers'])
+
+    region_list.visible = True  # 地域リストを表示
+    page.update()
+
+def main(page: ft.Page):
+    page.title = "天気予報アプリ"
+
+    # 天気情報を表示するためのRow（初めは非表示）
+    weather_details = ft.Row(
+        [],
+        visible=False,  # 初めは非表示
+        wrap=True,  # 複数行に折り返す
+    )
+
+    # 地域をリストとして表示
+    region_list = ft.Column(
+        [],
+        visible=False  # 初めは非表示
+    )
+
+    # 上部サイドバー（タイトル部分）
+    top_bar = ft.Container(
+        content=ft.Row(
+            [
+                ft.Icon(ft.icons.WB_SUNNY, color=ft.colors.YELLOW),
+                ft.Text("天気予報", size=20, color=ft.colors.WHITE),
+                ft.Icon(ft.icons.MORE_VERT, color=ft.colors.WHITE),
+            ],
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+        ),
+        padding=10,
+        bgcolor=ft.colors.INDIGO,
+        height=60,
+    )
+
+    # 地域選択の横幅を調整可能にするContainer
+    regions_container = ft.Container(
+        content=ft.ExpansionTile(
+            title=ft.Text("地域を選択"),
+            controls=[region_list]
+        ),
+        width=300,  # 横幅を調整可能
+        padding=5,
+    )
+
+    # メインのレイアウト（上部にタイトル、左側に地域選択、右側に天気予報）
+    content_column = ft.Row(
+        controls=[
+            ft.Column(
+                controls=[
+                    regions_container,  # 地域選択
+                ],
+                width=300,  # 横幅を調整可能
+            ),
+            ft.VerticalDivider(width=1),
+            ft.Column(
+                controls=[
+                    weather_details,  # 天気予報
+                ],
+                width=700,  # 横幅を調整可能
+            ),
+        ]
+    )
+
+    # ページに上部サイドバーとコンテンツを設定
+    page.add(
+        top_bar,
+        content_column,
+    )
+
+    # 地域リストを更新
+    update_region_list(page, region_list, weather_details)
+
+ft.app(target=main)
